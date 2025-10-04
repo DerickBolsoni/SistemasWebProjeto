@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Configuração SNS para FastDelivery Tracker - Hamburgueria'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, hom, main]
+    Description: Ambiente de deploy
+
+Resources:
+  # Tópico SNS para notificações (usando nome fixo conforme requisito)
+  FastDeliveryTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: FastDeliveryTopic
+      DisplayName: FastDelivery Notifications - Hamburgueria
+      Tags:
+        - Key: Project
+          Value: FastDeliveryTracker
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Subscription para Lambda notifyOwner
+  NotifyOwnerSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: lambda
+      TopicArn: !Ref FastDeliveryTopic
+      Endpoint: !GetAtt NotifyOwnerLambda.Arn
+
+  # Permissão para SNS invocar Lambda
+  NotifyOwnerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NotifyOwnerLambda
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref FastDeliveryTopic
+
+Outputs:
+  SnsTopicArn:
+    Description: ARN do tópico SNS FastDeliveryTopic
+    Value: !Ref FastDeliveryTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-SnsTopicArn
+  
+  SnsTopicName:
+    Description: Nome do tópico SNS
+    Value: FastDeliveryTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-SnsTopicName

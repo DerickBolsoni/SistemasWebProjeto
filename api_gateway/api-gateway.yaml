@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'API Gateway para FastDelivery Tracker - Hamburgueria'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, hom, main]
+    Description: Ambiente de deploy
+
+Resources:
+  # API Gateway
+  FastDeliveryAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub 'FastDeliveryAPI-${Environment}'
+      Description: API para sistema de entrega de hamburgueria
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # Recurso para add-order (endpoint principal)
+  AddOrderResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FastDeliveryAPI
+      ParentId: !GetAtt FastDeliveryAPI.RootResourceId
+      PathPart: add-order
+
+  # Recurso para pedidos específicos
+  OrderResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FastDeliveryAPI
+      ParentId: !GetAtt FastDeliveryAPI.RootResourceId
+      PathPart: order
+
+  # Recurso para pedidos com ID
+  OrderIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FastDeliveryAPI
+      ParentId: !Ref OrderResource
+      PathPart: '{order_id}'
+
+  # Recurso para marcar como entregue
+  DeliveredResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FastDeliveryAPI
+      ParentId: !Ref OrderIdResource
+      PathPart: delivered
+
+  # Método POST /add-order
+  PostAddOrderMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FastDeliveryAPI
+      ResourceId: !Ref AddOrderResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:sa-east-1:lambda:path/2015-03-31/functions/${AddOrderLambda.Arn}/invocations'
+
+  # Método PUT /order/{order_id}/delivered
+  PutDeliveredMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FastDeliveryAPI
+      ResourceId: !Ref DeliveredResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:sa-east-1:lambda:path/2015-03-31/functions/${SetAsDeliveredLambda.Arn}/invocations'
+
+  # Permissões para Lambda invocar API Gateway
+  AddOrderLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AddOrderLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:sa-east-1:${AWS::AccountId}:${FastDeliveryAPI}/*/*'
+
+  SetAsDeliveredLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SetAsDeliveredLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:sa-east-1:${AWS::AccountId}:${FastDeliveryAPI}/*/*'
+
+  # Deploy do API Gateway
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PostAddOrderMethod
+      - PutDeliveredMethod
+    Properties:
+      RestApiId: !Ref FastDeliveryAPI
+      StageName: !Ref Environment
+
+Outputs:
+  ApiGatewayUrl:
+    Description: URL do API Gateway
+    Value: !Sub 'https://${FastDeliveryAPI}.execute-api.sa-east-1.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiGatewayUrl
+  
+  ApiGatewayId:
+    Description: ID do API Gateway
+    Value: !Ref FastDeliveryAPI
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiGatewayId

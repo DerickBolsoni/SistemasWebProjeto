@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Tabela DynamoDB para tokens de tracking do FastDelivery Tracker'
+
+Resources:
+  TokensTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Tokens
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tracking_token
+          AttributeType: S
+        - AttributeName: order_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tracking_token
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: OrderIdIndex
+          KeySchema:
+            - AttributeName: order_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: FastDeliveryTracker
+        - Key: Environment
+          Value: !Ref Environment
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, hom, main]
+    Description: Ambiente de deploy
+
+Outputs:
+  TokensTableName:
+    Description: Nome da tabela Tokens
+    Value: !Ref TokensTable
+    Export:
+      Name: !Sub ${AWS::StackName}-TokensTableName
+  
+  TokensTableArn:
+    Description: ARN da tabela Tokens
+    Value: !GetAtt TokensTable.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-TokensTableArn
+

@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Tabela DynamoDB para pedidos do FastDelivery Tracker'
+
+Resources:
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: order_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: order_id
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: FastDeliveryTracker
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  OrdersTableName:
+    Description: Nome da tabela Orders
+    Value: !Ref OrdersTable
+    Export:
+      Name: !Sub ${AWS::StackName}-OrdersTableName
+  
+  OrdersTableArn:
+    Description: ARN da tabela Orders
+    Value: !GetAtt OrdersTable.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-OrdersTableArn
+

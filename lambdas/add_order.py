@@ -1,81 +1,77 @@
 import json
-import logging
 import boto3
-from datetime import datetime
 import uuid
+import os
+from datetime import datetime
+from botocore.exceptions import ClientError
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# Ambiente
+ORDERS_TABLE = os.environ.get("ORDERS_TABLE", "Orders")
+SNS_TOPIC_ARN = os.environ.get("ORDERS_TOPIC_ARN")  # informe no Lambda
 
-# Inicializar cliente DynamoDB
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table('Orders')
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table(ORDERS_TABLE)
+sns_client = boto3.client("sns")
 
 def lambda_handler(event, context):
-    logger.info("Evento recebido: %s", json.dumps(event))
     try:
-        body = json.loads(event.get("body", "{}"))
-        
-        # Validar campos obrigatórios
-        required_fields = ['customer_name', 'customer_email', 'delivery_address', 'items']
-        for field in required_fields:
-            if field not in body:
-                return {
-                    "statusCode": 400,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps({"erro": f"Campo obrigatório ausente: {field}"})
-                }
-        
-        # Criar ID único para o pedido
+        # 🚩 Aceita o evento do API Gateway ou do teste manual
+        if "body" in event:
+            body = json.loads(event["body"])
+        else:
+            body = event
+
+        # Validação básica
+        if not all(k in body for k in ("customer_name","customer_email","delivery_address","items")):
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"erro": "Campos obrigatórios ausentes"})
+            }
+
         order_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow().isoformat()
-        
-        # Preparar item para DynamoDB
-        order_item = {
-            'order_id': order_id,
-            'customer_name': body['customer_name'],
-            'customer_email': body['customer_email'],
-            'delivery_address': body['delivery_address'],
-            'items': body['items'],
-            'status': 'PENDING',
-            'created_at': timestamp,
-            'updated_at': timestamp
+        order = {
+            "order_id": order_id,
+            "customer_name": body["customer_name"],
+            "customer_email": body["customer_email"],
+            "delivery_address": body["delivery_address"],
+            "items": body["items"],
+            "status": "Criado",
+            "created_at": datetime.utcnow().isoformat()
         }
-        
-        # Adicionar campos opcionais se fornecidos
-        if 'special_instructions' in body:
-            order_item['special_instructions'] = body['special_instructions']
-        
-        if 'estimated_delivery_time' in body:
-            order_item['estimated_delivery_time'] = body['estimated_delivery_time']
-        
-        # Salvar no DynamoDB
-        table.put_item(Item=order_item)
-        
-        logger.info("Pedido criado com sucesso: %s", order_id)
-        
-        # Acionar SNS via notify_owner
-        sns = boto3.client('sns')
-        sns.publish(
-            TopicArn='arn:aws:sns:sa-east-1:490422578972:FastDeliveryTopic',
-            Message=json.dumps({"pedido": order_id, "status": "Criado", "acao": "novo_pedido"})
-        )
-        
+
+        # Grava no DynamoDB
+        table.put_item(Item=order)
+
+        # Publica no SNS (opcional)
+        if SNS_TOPIC_ARN:
+            sns_client.publish(
+                TopicArn=SNS_TOPIC_ARN,
+                Message=json.dumps(order),
+                Subject="Novo Pedido Criado"
+            )
+
         return {
             "statusCode": 201,
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps({
                 "mensagem": "Pedido criado com sucesso",
-                "order_id": order_id,
-                "status": "PENDING"
+                "order_id": order_id
             })
         }
-        
-    except Exception as e:
-        logger.error("Erro na execução da Lambda: %s", str(e))
+
+    except ClientError as e:
+        print(f"Erro AWS: {e}")
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"erro": "Erro interno na função Lambda."})
+            "body": json.dumps({"erro": "Erro AWS", "detalhe": str(e)})
         }
 
+    except Exception as e:
+        print(f"Erro geral: {e}")
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"erro": "Erro geral", "detalhe": str(e)})
+        }

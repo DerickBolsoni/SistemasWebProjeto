@@ -1,3 +1,8 @@
+import json
+import logging
+import boto3
+from datetime import datetime, timezone
+import os
 # --- Importação das bibliotecas necessárias ---
 import json  # Para manipular dados no formato JSON
 import logging  # Para registrar logs de execução no CloudWatch
@@ -10,6 +15,8 @@ import uuid  # Para gerar identificadores únicos para os tokens
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+ORDERS_TABLE_NAME = os.environ.get("ORDERS_TABLE_NAME")
+TOKENS_TABLE_NAME = os.environ.get("TOKENS_TABLE_NAME")
 # --- Inicialização dos clientes da AWS ---
 # Cria um objeto de recurso para interagir com o DynamoDB.
 dynamodb = boto3.resource('dynamodb')
@@ -27,85 +34,56 @@ def lambda_handler(event, context):
     
     # --- Bloco Principal de Tratamento de Erros ---
     try:
-        # --- Processamento em Lote das Notificações ---
-        # Um único evento do SNS pode conter várias mensagens (records).
-        # O 'for' loop garante que todas as mensagens sejam processadas individualmente.
-        for record in event['Records']:
-            
-            # --- Bloco de Erro por Mensagem ---
-            # Este 'try/except' interno é crucial: se uma mensagem falhar,
-            # o 'continue' pula para a próxima, evitando que o lote inteiro pare por um único erro.
-            try:
-                # Extrai a mensagem real, que está dentro da estrutura do evento SNS.
-                sns_message = json.loads(record['Sns']['Message'])
-                logger.info("Mensagem SNS processada: %s", json.dumps(sns_message))
-                
-                # --- Extração Segura dos Dados ---
-                # Usa o método .get() para extrair os dados da mensagem.
-                # Isso evita erros caso uma chave não exista (retornando 'None' em vez de quebrar a execução).
-                pedido_id = sns_message.get('pedido')
-                status = sns_message.get('status')
-                acao = sns_message.get('acao')
-                cliente = sns_message.get('cliente')
-                entregue_em = sns_message.get('entregue_em')
-                
-                # --- Validação Mínima ---
-                # Verifica se o dado mais importante (ID do pedido) está presente.
-                if not pedido_id:
-                    logger.error("ID do pedido ausente na mensagem SNS")
-                    continue  # Pula para o próximo 'record' do loop
+        dynamodb = boto3.resource('dynamodb')
+        orders_table = dynamodb.Table(ORDERS_TABLE_NAME)
+        tokens_table = dynamodb.Table(TOKENS_TABLE_NAME)
 
-                # --- Geração do Token de Rastreamento ---
-                # Cria um token de rastreamento único e universal.
-                tracking_token = str(uuid.uuid4())
-                timestamp = datetime.utcnow().isoformat()
-                
-                # --- Montagem do Item para a Tabela 'Tokens' ---
-                # Cria um dicionário que representa o token a ser salvo no DynamoDB.
-                token_item = {
-                    'tracking_token': tracking_token,  # Chave de partição (identificador único)
-                    'order_id': pedido_id,
-                    'status': status,
-                    'acao': acao,
-                    # Usa 'or' para definir um valor padrão caso o campo seja nulo ou vazio.
-                    'cliente': cliente or 'N/A', 
-                    'entregue_em': entregue_em or timestamp,
-                    'created_at': timestamp,
-                    'notification_sent': True  # Flag para indicar que a notificação foi processada
-                }
-                
-                # --- Persistência no Banco de Dados ---
-                # Salva o item (token) na tabela 'Tokens' do DynamoDB.
-                tokens_table.put_item(Item=token_item)
-                
-                logger.info("Token criado com sucesso: %s para pedido: %s", tracking_token, pedido_id)
-                
-                # Log de confirmação para monitoramento
-                logger.info("Notificação processada - Pedido: %s, Status: %s, Ação: %s", 
-                            pedido_id, status, acao)
-                
-            except Exception as e:
-                # Captura e loga o erro específico daquela mensagem SNS.
-                logger.error("Erro ao processar record SNS: %s", str(e))
-                continue  # Garante que a execução continue com a próxima mensagem.
-        
-        logger.info("Processamento de notificações SNS concluído")
-        
-        # --- Resposta de Sucesso ---
-        # Retorna uma resposta 200 (OK) indicando que o processamento terminou.
+        path_params = event.get("pathParameters") or {}
+        order_id = path_params.get("order_id")
+        if not order_id:
+            return {"statusCode": 400, "body": json.dumps({"erro": "order_id é obrigatório"})}
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        # Atualiza status no Orders
+        orders_table.update_item(
+            Key={"order_id": order_id},
+            UpdateExpression="SET #s = :s, updated_at = :u",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":s": "DELIVERED", ":u": timestamp}
+        )
+
+        # Gravar status na tabela Tokens (necessário tracking_token)
+        tracking_token = str(uuid.uuid4())
+        tokens_table.put_item(Item={
+            "tracking_token": tracking_token,
+            "order_id": order_id,
+            "status": "DELIVERED",
+            "updated_at": timestamp
+        })
+
+        # Publicar SNS
+        sns = boto3.client('sns')
+        sns.publish(
+            TopicArn=os.environ["SNS_TOPIC_ARN"],
+            Message=json.dumps({
+                "pedido": order_id,
+                "tracking_token": tracking_token,
+                "status": "DELIVERED",
+                "acao": "pedido_entregue"
+            })
+        )
+
         return {
             "statusCode": 200,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({
-                "mensagem": "Notificações processadas com sucesso",
-                "processed_records": len(event['Records']) # Informa quantos records foram processados
-            })
+            "body": json.dumps({"mensagem": "Pedido marcado como entregue", "order_id": order_id})
         }
-        
-    # --- Bloco de Captura de Erros Gerais ---
+
     except Exception as e:
         # Captura erros que podem ocorrer fora do loop (ex: evento malformado).
         logger.error("Erro na execução da Lambda: %s", str(e))
+        return {"statusCode": 500, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"erro": str(e)})}
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json"},

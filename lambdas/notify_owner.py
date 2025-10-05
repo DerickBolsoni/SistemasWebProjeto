@@ -1,3 +1,9 @@
+import json
+import logging
+import boto3
+from datetime import datetime, timezone
+import os
+import uuid
 # --- Importação das bibliotecas necessárias ---
 import json  # Para manipular dados no formato JSON
 import logging  # Para registrar logs de execução no CloudWatch
@@ -10,6 +16,7 @@ import uuid  # Para gerar identificadores únicos para os tokens
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+TOKENS_TABLE_NAME = os.environ.get("TOKENS_TABLE_NAME")
 # --- Inicialização dos clientes da AWS ---
 # Cria um objeto de recurso para interagir com o DynamoDB.
 dynamodb = boto3.resource('dynamodb')
@@ -27,6 +34,32 @@ def lambda_handler(event, context):
     
     # --- Bloco Principal de Tratamento de Erros ---
     try:
+        dynamodb = boto3.resource('dynamodb')
+        tokens_table = dynamodb.Table(TOKENS_TABLE_NAME)
+
+        records = event.get("Records", [])
+        processed = 0
+
+        for record in records:
+            sns_message = json.loads(record.get("Sns", {}).get("Message", "{}"))
+            logger.info("Mensagem SNS processada: %s", sns_message)
+
+            tracking_token = str(uuid.uuid4())
+            tokens_table.put_item(Item={
+                "tracking_token": tracking_token,
+                "order_id": sns_message.get("pedido", "unknown"),
+                "status": sns_message.get("status", "UNKNOWN"),
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+
+            processed += 1
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"mensagem": "Notificações processadas com sucesso", "processed_records": processed})
+        }
+
         # --- Processamento em Lote das Notificações ---
         # Um único evento do SNS pode conter várias mensagens (records).
         # O 'for' loop garante que todas as mensagens sejam processadas individualmente.
@@ -106,6 +139,7 @@ def lambda_handler(event, context):
     except Exception as e:
         # Captura erros que podem ocorrer fora do loop (ex: evento malformado).
         logger.error("Erro na execução da Lambda: %s", str(e))
+        return {"statusCode": 500, "headers": {"Content-Type": "application/json"}, "body": json.dumps({"erro": str(e)})}
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json"},

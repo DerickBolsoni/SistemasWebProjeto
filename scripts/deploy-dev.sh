@@ -22,9 +22,7 @@ fi
 
 # Criar arquivo ZIP com as funções Lambda
 echo "📦 Criando pacote das funções Lambda..."
-cd lambdas
-zip -r ../$LAMBDA_ZIP_FILE *.py requirements.txt
-cd ..
+echo "📦 Usando pacote lambdas.zip já criado manualmente..."
 
 # Deploy do CloudFormation
 echo "☁️  Fazendo deploy do CloudFormation..."
@@ -97,3 +95,14 @@ echo "  -d '{\"customer_name\":\"João Silva\",\"customer_email\":\"joao@email.c
 echo ""
 echo "📊 Para verificar logs:"
 echo "aws logs describe-log-groups --region $REGION"
+
+FastDeliveryTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'FastDeliveryTopic-${Environment}-${AWS::StackName}'
+      DisplayName: FastDelivery Notifications - Hamburgueria
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment

@@ -52,7 +52,7 @@ Resources:
       Environment:
         Variables:
           ORDERS_TABLE_NAME: !Ref OrdersTable
-          SNS_TOPIC_ARN: !Ref FastDeliveryNotificationsTopic
+          SNS_TOPIC_ARN: !Ref FastDeliveryTopic
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -117,7 +117,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - sns:Publish
-                Resource: !Ref FastDeliveryNotificationsTopic
+                Resource: !Ref FastDeliveryTopic
 
   # Tabela DynamoDB Orders
   OrdersTable:

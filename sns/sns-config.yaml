@@ -1,15 +1,28 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Configuração SNS para FastDelivery Tracker - Hamburgueria'
+Description: 'Este template provisiona a infraestrutura de notificações para o sistema FastDelivery Tracker da Hamburgueria, utilizando um tópico AWS SNS central e suas respectivas permissões.'
 
+# =====================================================================================
+# Parâmetros
+# Define valores de entrada para customizar a implantação da stack.
+# =====================================================================================
 Parameters:
   Environment:
     Type: String
     Default: dev
     AllowedValues: [dev, hom, main]
-    Description: Ambiente de deploy
+    Description: 'Especifica o ambiente (ex: dev, hom, main) onde a stack será implantada. Usado para aplicar tags aos recursos, facilitando a identificação e o gerenciamento.'
 
+# =====================================================================================
+# Recursos
+# Define os recursos AWS que serão criados e gerenciados por esta stack.
+# =====================================================================================
 Resources:
-  # Tópico SNS para notificações (usando nome fixo conforme requisito)
+  # --- Tópico SNS ---
+  # Tópico SNS central para o sistema FastDelivery.
+  # Este tópico atua como um hub de mensagens para eventos importantes, como 'pedido recebido',
+  # 'pedido em preparo', 'entregador a caminho', etc.
+  # O nome 'FastDeliveryTopic' é fixo, conforme requisito, para garantir que outros serviços
+  # possam publicar mensagens nele de forma consistente e desacoplada.
   FastDeliveryTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -21,7 +34,12 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # Subscription para Lambda notifyOwner
+  # --- Inscrição (Subscription) para a Lambda ---
+  # Conecta o tópico SNS à função Lambda 'NotifyOwnerLambda'.
+  # Qualquer mensagem publicada no 'FastDeliveryTopic' será automaticamente encaminhada
+  # para esta função para processamento (ex: notificar o dono da hamburgueria).
+  # NOTA: A função Lambda 'NotifyOwnerLambda' não é criada neste template. Ela deve ser
+  # definida em outro lugar na mesma stack ou seu ARN deve ser importado.
   NotifyOwnerSubscription:
     Type: AWS::SNS::Subscription
     Properties:
@@ -29,7 +47,11 @@ Resources:
       TopicArn: !Ref FastDeliveryTopic
       Endpoint: !GetAtt NotifyOwnerLambda.Arn
 
-  # Permissão para SNS invocar Lambda
+  # --- Permissão para a Lambda ---
+  # Permissão baseada em recurso (Resource-Based Policy) para a função Lambda.
+  # Esta política concede explicitamente ao serviço SNS (sns.amazonaws.com) a autorização
+  # para invocar a função 'NotifyOwnerLambda' sempre que uma mensagem for publicada no tópico
+  # especificado em 'SourceArn'. Sem isso, o SNS não teria permissão para acionar a Lambda.
   NotifyOwnerLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -38,15 +60,20 @@ Resources:
       Principal: sns.amazonaws.com
       SourceArn: !Ref FastDeliveryTopic
 
+# =====================================================================================
+# Outputs
+# Expõe informações importantes sobre os recursos criados para serem usadas por
+# outras stacks, scripts ou para consulta no console da AWS.
+# =====================================================================================
 Outputs:
   SnsTopicArn:
-    Description: ARN do tópico SNS FastDeliveryTopic
+    Description: 'ARN (Amazon Resource Name) completo do tópico SNS. Essencial para referenciar este tópico em outras stacks ou serviços.'
     Value: !Ref FastDeliveryTopic
     Export:
       Name: !Sub ${AWS::StackName}-SnsTopicArn
-  
+
   SnsTopicName:
-    Description: Nome do tópico SNS
-    Value: FastDeliveryTopic
+    Description: 'Nome físico do tópico SNS. Exportado para conveniência de referência.'
+    Value: FastDeliveryTopic # O nome é fixo, então podemos usar o valor literal.
     Export:
       Name: !Sub ${AWS::StackName}-SnsTopicName

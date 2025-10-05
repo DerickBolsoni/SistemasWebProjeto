@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# Script para Limpeza dos Recursos AWS do Projeto FastDelivery Tracker
+# Script para Limpezza dos Recursos AWS do Projeto FastDelivery Tracker
 #
 # DESCRIÇÃO:
 # Este script automatiza a remoção de todas as stacks do CloudFormation

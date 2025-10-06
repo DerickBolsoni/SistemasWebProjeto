@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Configura a SQS para receber notificações de pedidos'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+
+Resources:
+  OrdersQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'OrdersQueue-${Environment}'
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrdersQueueDLQ.Arn
+        maxReceiveCount: 5
+
+  OrdersQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'OrdersQueueDLQ-${Environment}'
+
+  SqsPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref OrdersQueue
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 'SQS:SendMessage'
+            Resource: !GetAtt OrdersQueue.Arn
+            Condition:
+              ArnEquals:
+                'aws:SourceArn': !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:FastDeliveryTopic'
+
+Outputs:
+  OrdersQueueArn:
+    Value: !GetAtt OrdersQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-OrdersQueueArn'
+
+  OrdersQueueUrl:
+      Value: !Ref OrdersQueue
+      Export:
+        Name: !Sub '${AWS::StackName}-OrdersQueueUrl'

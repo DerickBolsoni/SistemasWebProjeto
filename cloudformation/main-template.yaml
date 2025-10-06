@@ -14,6 +14,14 @@ Parameters:
     Description: Nome do projeto
 
 Resources:
+  # SQS Stack
+  SqsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./sqs-config.yaml
+      Parameters:
+        Environment: !Ref Environment
+
   # Lambda Function para adicionar pedidos
   AddOrderLambda:
     Type: AWS::Lambda::Function
@@ -30,6 +38,7 @@ Resources:
       Environment:
         Variables:
           ORDERS_TABLE_NAME: !Ref OrdersTable
+          SNS_TOPIC_ARN: !Ref FastDeliveryTopic
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -118,223 +127,61 @@ Resources:
                 Action:
                   - sns:Publish
                 Resource: !Ref FastDeliveryTopic
+        - PolicyName: SQSQueueAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sqs:ReceiveMessage'
+                  - 'sqs:DeleteMessage'
+                  - 'sqs:GetQueueAttributes'
+                Resource: !GetAtt SqsStack.Outputs.OrdersQueueArn
 
   # Tabela DynamoDB Orders
   OrdersTable:
-    Type: AWS::DynamoDB::Table
+    Type: AWS::CloudFormation::Stack
     Properties:
-      TableName: !Sub '${ProjectName}-orders-${Environment}'
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: order_id
-          AttributeType: S
-      KeySchema:
-        - AttributeName: order_id
-          KeyType: HASH
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      SSESpecification:
-        SSEEnabled: true
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
+      TemplateURL: ./orders-table.yaml
+      Parameters:
+        Environment: !Ref Environment
 
   # Tabela DynamoDB Tokens
   TokensTable:
-    Type: AWS::DynamoDB::Table
+    Type: AWS::CloudFormation::Stack
     Properties:
-      TableName: !Sub '${ProjectName}-tokens-${Environment}'
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: tracking_token
-          AttributeType: S
-        - AttributeName: order_id
-          AttributeType: S
-      KeySchema:
-        - AttributeName: tracking_token
-          KeyType: HASH
-      GlobalSecondaryIndexes:
-        - IndexName: OrderIdIndex
-          KeySchema:
-            - AttributeName: order_id
-              KeyType: HASH
-          Projection:
-            ProjectionType: ALL
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      SSESpecification:
-        SSEEnabled: true
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
+      TemplateURL: ./tokens-table.yaml
+      Parameters:
+        Environment: !Ref Environment
 
-  # Tópico SNS (nome fixo conforme requisito do professor)
+  # Tópico SNS
   FastDeliveryTopic:
-    Type: AWS::SNS::Topic
+    Type: AWS::CloudFormation::Stack
     Properties:
-      TopicName: FastDeliveryTopic
-      DisplayName: FastDelivery Notifications - Hamburgueria
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
+      TemplateURL: ./sns-config.yaml
+      Parameters:
+        Environment: !Ref Environment
 
-  # Subscription SNS para Lambda
-  NotifyOwnerSubscription:
-    Type: AWS::SNS::Subscription
+  # Event Source Mapping para SQS e NotifyOwnerLambda
+  NotifyOwnerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
     Properties:
-      Protocol: lambda
-      TopicArn: !Ref FastDeliveryTopic
-      Endpoint: !GetAtt NotifyOwnerLambda.Arn
-
-  # Permissão SNS para Lambda
-  NotifyOwnerLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref NotifyOwnerLambda
-      Action: lambda:InvokeFunction
-      Principal: sns.amazonaws.com
-      SourceArn: !Ref FastDeliveryTopic
+      EventSourceArn: !GetAtt SqsStack.Outputs.OrdersQueueArn
+      FunctionName: !GetAtt NotifyOwnerLambda.Arn
+      Enabled: true
+      BatchSize: 10
 
   # API Gateway
-  FastDeliveryAPI:
-    Type: AWS::ApiGateway::RestApi
+  ApiGateway:
+    Type: AWS::CloudFormation::Stack
     Properties:
-      Name: !Sub '${ProjectName}-api-${Environment}'
-      Description: API para FastDelivery Tracker
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
-
-  # Recurso para add-order (endpoint principal)
-  AddOrderResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref FastDeliveryAPI
-      ParentId: !GetAtt FastDeliveryAPI.RootResourceId
-      PathPart: add-order
-
-  # Recurso para pedidos específicos
-  OrderResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref FastDeliveryAPI
-      ParentId: !GetAtt FastDeliveryAPI.RootResourceId
-      PathPart: order
-
-  # Recurso para pedidos com ID
-  OrderIdResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref FastDeliveryAPI
-      ParentId: !Ref OrderResource
-      PathPart: '{order_id}'
-
-  # Recurso para marcar como entregue
-  DeliveredResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref FastDeliveryAPI
-      ParentId: !Ref OrderIdResource
-      PathPart: delivered
-
-  # Método POST /add-order
-  PostAddOrderMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref FastDeliveryAPI
-      ResourceId: !Ref AddOrderResource
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:sa-east-1:lambda:path/2015-03-31/functions/${AddOrderLambda.Arn}/invocations'
-
-  # Método PUT /order/{order_id}/delivered
-  PutDeliveredMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref FastDeliveryAPI
-      ResourceId: !Ref DeliveredResource
-      HttpMethod: PUT
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:sa-east-1:lambda:path/2015-03-31/functions/${SetAsDeliveredLambda.Arn}/invocations'
-
-  # Permissões para Lambda invocar API Gateway
-  AddOrderLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref AddOrderLambda
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:sa-east-1:${AWS::AccountId}:${FastDeliveryAPI}/*/*'
-
-  SetAsDeliveredLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref SetAsDeliveredLambda
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:sa-east-1:${AWS::AccountId}:${FastDeliveryAPI}/*/*'
-
-  # Deploy do API Gateway
-  ApiDeployment:
-    Type: AWS::ApiGateway::Deployment
-    DependsOn:
-      - PostAddOrderMethod
-      - PutDeliveredMethod
-    Properties:
-      RestApiId: !Ref FastDeliveryAPI
-      StageName: !Ref Environment
+      TemplateURL: ./api-gateway.yaml
+      Parameters:
+        Environment: !Ref Environment
+        AddOrderLambda: !GetAtt AddOrderLambda.Arn
+        SetAsDeliveredLambda: !GetAtt SetAsDeliveredLambda.Arn
 
 Outputs:
   ApiGatewayUrl:
     Description: URL do API Gateway
-    Value: !Sub 'https://${FastDeliveryAPI}.execute-api.sa-east-1.amazonaws.com/${Environment}'
-    Export:
-      Name: !Sub ${AWS::StackName}-ApiGatewayUrl
-  
-  OrdersTableName:
-    Description: Nome da tabela Orders
-    Value: !Ref OrdersTable
-    Export:
-      Name: !Sub ${AWS::StackName}-OrdersTableName
-  
-  TokensTableName:
-    Description: Nome da tabela Tokens
-    Value: !Ref TokensTable
-    Export:
-      Name: !Sub ${AWS::StackName}-TokensTableName
-  
-  SnsTopicArn:
-    Description: ARN do tópico SNS FastDeliveryTopic
-    Value: !Ref FastDeliveryTopic
-    Export:
-      Name: !Sub ${AWS::StackName}-SnsTopicArn
-  
-  AddOrderLambdaArn:
-    Description: ARN da função Lambda AddOrder
-    Value: !GetAtt AddOrderLambda.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-AddOrderLambdaArn
-  
-  SetAsDeliveredLambdaArn:
-    Description: ARN da função Lambda SetAsDelivered
-    Value: !GetAtt SetAsDeliveredLambda.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-SetAsDeliveredLambdaArn
-  
-  NotifyOwnerLambdaArn:
-    Description: ARN da função Lambda NotifyOwner
-    Value: !GetAtt NotifyOwnerLambda.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-NotifyOwnerLambdaArn
+    Value: !GetAtt ApiGateway.Outputs.ApiGatewayUrl

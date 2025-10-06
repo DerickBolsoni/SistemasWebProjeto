@@ -21,7 +21,8 @@ O FastDelivery Tracker é um sistema que permite registrar pedidos de hambúrgue
 - **DynamoDB**: Armazena dados dos pedidos e tokens
 - **SNS (Simple Notification Service)**: Envia notificações quando um pedido muda de status
 - **CloudWatch**: Armazena logs das funções Lambda
-
+- **SQS**
+  
 ### Fluxo Simplificado:
 1. **Cliente envia pedido** → `addOrder` → grava na tabela Orders
 2. **Pedido é entregue** → `setAsDelivered` → atualiza status e publica mensagem no SNS Topic
